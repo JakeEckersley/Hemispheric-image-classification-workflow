@@ -1,0 +1,104 @@
+---
+title: "Step 1 - raw image pre-processing"
+author: "Jake Eckersley"
+contact: 'jake.eckersley@uwa.edu.au'
+date: "2024-08-16"
+output: html_document
+---
+
+# Note this code can also be run as a python script (i.e., in jupiter notebooks)
+# by changing raws = Sys.glob(file.path("F:/Field sites and data/Hemi cam/June 2023","*.ARW"))
+# to:
+# import glob
+# raws = glob.glob('"F:/Field sites and data/Hemi cam/June 2023"/*.ARW")
+
+```{r setup,include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(reticulate)
+
+# run python version with the required packages
+reticulate::use_python("C:/Users/22064705/Miniconda3/python.exe", required = TRUE)
+py_config()
+```
+
+
+```{r}
+#read in example files
+example_raw_images = Sys.glob(file.path("C:/Users/22064705/R directory/Fortescue hemi img processing/Submission scripts/Example raw images","*.ARW"))
+```
+
+
+```{python}
+# import libraries
+import os
+import glob
+import rawpy
+import imageio
+from PIL import Image, ImageDraw
+from pandas import *
+import numpy as np
+import pandas as pd
+from skimage.color import xyz2lab
+
+```
+
+```{python}
+# edit file path
+raw_files = r.rexample_raw_images
+
+# where to put outputs
+destination="C:/Users/22064705/R directory/Fortescue hemi img processing/Submission scripts/processed_tiffs/"
+```
+
+
+
+```{python}
+# reads in .raw .RAW and .ARW files and converts them to 16 bit TIFS for further analysis 
+# the rawpy and imread libraries treat images as numpy arrays
+# the portrait functions ensure that the image is up the right way for the mask to work in later sections of code.
+
+def portrait(rgb):
+    height = rgb[:,:,0].shape[0]
+    width = rgb[:,:,0].shape[1]
+    if width > height:
+      new = np.empty(shape=(6024,4024,3)).astype('uint16')    #### set image dimensions here
+      new[:,:,0] = rgb[:,:,0].transpose()
+      new[:,:,1] = rgb[:,:,1].transpose()
+      new[:,:,2] = rgb[:,:,2].transpose()
+    elif width < height:
+      new = np.empty(shape=(6024,4024,3))        #### and here
+      new = rgb
+    return(new)
+
+for i in range(len(raw_files)):
+  with rawpy.imread(raw_files[0]) as raw:
+    #the user_wb are the white balance values for clear skies. may need to adjust for overcast skies
+    rgb = raw.postprocess(output_bps=16,gamma=(1,1), no_auto_bright=True,output_color=rawpy.ColorSpace(4),user_wb=(2.86,1,1.75,1)) #edited to read in as prophoto rgb
+    rgb2 = raw.postprocess(output_bps=16,gamma=(1,1), no_auto_bright=False,output_color=rawpy.ColorSpace(4)) #read in as prophoto rgb
+    xyz = raw.postprocess(output_bps=16,gamma=(1,1), no_auto_bright=True,output_color=rawpy.ColorSpace(5),user_wb=(2.86,1,1.75,1)) #read in as prophoto rgb
+    rgb = portrait(rgb)
+    rgb2 = portrait(rgb2)
+    xyz = portrait(xyz)
+    lab = xyz2lab(xyz, illuminant='D65', observer='10',channel_axis=2)
+    
+    #lab_scaled = (lab + [0, 128, 128]) *(65535 / np.array([100, 255, 255]))
+    #plt.imshow(lab_scaled)
+    #plt.show()
+    
+    
+    # Save the images as a 16-bit TIFFs
+    # hash out any of the below that aren't needed
+    # autobright is easier to use for classification than linear RGBs from raw files
+    
+    
+    imageio.imsave(destination + os.path.basename(os.path.splitext(raw_files[i])[0]) + '_PPrgb.tif',rgb)
+    # Save the gamma corrected RGB image with auto brightness as a 16-bit TIFF
+    imageio.imsave(destination + os.path.basename(os.path.splitext(raw_files[i])[0]) + '_PPrgb_autobright.tif',rgb2)
+    # Save the linear RGB image as a 16-bit TIFF
+    imageio.imsave(destination + os.path.basename(os.path.splitext(raw_files[i])[0]) + '_xyz.tif',xyz)
+    # Save the LAB image as a 16-bit TIFF
+    imageio.imsave(destination + os.path.basename(os.path.splitext(raw_files[i])[0]) + '_lab.tif',lab)
+    
+
+```
+
