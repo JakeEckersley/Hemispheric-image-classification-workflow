@@ -1,0 +1,155 @@
+---
+title: "Raw image pre-processing"
+author: "Jake Eckersley"
+date: "2024-10-09"
+output: html_document
+---
+
+
+```{r setup,include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(reticulate)
+
+# run python with the required packages
+reticulate::use_python("C:/Users/22064705/Miniconda3/python.exe", required = TRUE)
+py_config()
+```
+
+```{r}
+#read in packages
+library(devtools)
+library(terra)
+library(hemispheR)
+```
+
+```{r}
+#read in files
+Jun_raw_photos = Sys.glob(file.path("F:/Field sites and data/Hemi cam/June 2023","*.ARW"))
+Aug_raw_photos<-Sys.glob(file.path("F:/Field sites and data/Hemi cam/Aug 22/above", "*.ARW"))
+Dec_21<-Sys.glob(file.path("H:/My Documents/PhD 2020/Field sites and data/Hemi cam/Dec 21/ab/clear/All clear photos", "*.JPG"))
+Mar_22<-Sys.glob(file.path("H:/My Documents/PhD 2020/Field sites and data/Hemi cam/March/ab/All clear photos", "*.JPG"))
+jpegs<-c(Dec_21,Mar_22)
+raws<-c(Jun_raw_photos,Aug_raw_photos)
+```
+
+
+```{r}
+##### new code:: find the labelled images to add additional colour models
+labelled<-Sys.glob(file.path("F:/Training tiffs/edited_shapes/","*.shp"))
+idx<-which(basename(tools::file_path_sans_ext(raws))%in%gsub('_classes','',basename(tools::file_path_sans_ext(labelled))))
+
+raws<-raws[idx[191:195]]
+#find the ones we haven't already got lab images for
+#raws<-raws[which(!basename(tools::file_path_sans_ext(raws))%in%gsub("_lab","",basename(tools::file_path_sans_ext(Sys.glob(file.path('F:/PhotoproRGB_LAB_imgs',"*lab.tif"))))))]
+```
+
+
+```{python}
+# import libraries
+import numpy as np
+import rawpy
+import tifffile as tiff
+from skimage.color import xyz2lab
+import os
+import imageio
+
+```
+
+```{python}
+# edit file path
+raw_files = r.raws
+jpg_files = r.jpegs
+destination='F:/Oct 23 Hemi tiffs LAI paper/'
+destination_2='F:/PhotoproRGB_LAB_imgs/'
+
+```
+
+
+
+```{python}
+# reads in .raw .RAW and .ARW files and converts them to 16 bit TIFS for further analysis 
+# the rawpy and imread libraries treat images as numpy arrays
+# the portrait functions ensure that the image is up the right way for the mask to work in later sections of code.
+
+def portrait(rgb):
+    height = rgb[:,:,0].shape[0]
+    width = rgb[:,:,0].shape[1]
+    if width > height:
+      new = np.empty(shape=(6024,4024,3)).astype('uint16')    #### set image dimensions here
+      new[:,:,0] = rgb[:,:,0].transpose()
+      new[:,:,1] = rgb[:,:,1].transpose()
+      new[:,:,2] = rgb[:,:,2].transpose()
+    elif width < height:
+      new = np.empty(shape=(6024,4024,3))        #### and here
+      new = rgb
+    return(new)
+
+for i in range(len(raw_files)):
+  with rawpy.imread(raw_files[i]) as raw:
+    output_filename = os.path.join(destination_2, os.path.basename(os.path.splitext(raw_files[i])[0]) + '_lab.tiff')
+
+    if not os.path.exists(output_filename):
+      
+      srgb = raw.postprocess(output_bps=16,gamma=(1,1),no_auto_bright=True,output_color=rawpy.ColorSpace(1),user_wb=(2.86,1,1.75,1)) #edited to read in as prophoto rgb
+      #the user_wb are the white balance values for clear skies. may need to adjust for overcast skies
+      pp_rgb = raw.postprocess(output_bps=16,gamma=(1,1), no_auto_bright=True,output_color=rawpy.ColorSpace(4),user_wb=(2.86,1,1.75,1)) #edited to read in as prophoto rgb
+      pp_rgb2 = raw.postprocess(output_bps=16,gamma=(1,1), no_auto_bright=False,output_color=rawpy.ColorSpace(4)) #read in as prophoto rgb
+      xyz = raw.postprocess(output_bps=16,gamma=(1,1), no_auto_bright=True,output_color=rawpy.ColorSpace(5),user_wb=(2.86,1,1.75,1)) #read in as prophoto rgb
+      
+      # reorient the images
+      srgb = portrait(srgb)
+      pp_rgb = portrait(pp_rgb)
+      pp_rgb2 = portrait(pp_rgb2)
+      xyz = portrait(xyz)
+      lab = xyz2lab(xyz, illuminant='D65', observer='10',channel_axis=2)
+      
+      
+      #############################
+      # to visualise
+      #############################
+      #lab_scaled = (lab + [0, 128, 128]) *(65535 / np.array([100, 255, 255]))
+      #plt.imshow(lab_scaled)
+      #plt.show()
+      
+      ###########################################
+      # Save the images as a 16-bit TIFFs
+      ###########################################
+      # hash out any of the below that aren't needed
+      imageio.imsave(destination_2 + os.path.basename(os.path.splitext(raw_files[i])[0]) + '_srgb.tif',srgb)
+      # autobright is easier to use for classification than linear RGBs from raw files
+      imageio.imsave(destination_2 + os.path.basename(os.path.splitext(raw_files[i])[0]) + '_PPrgb.tif',pp_rgb)
+      # Save the gamma corrected RGB image with auto brightness as a 16-bit TIFF
+      imageio.imsave(destination_2 + os.path.basename(os.path.splitext(raw_files[i])[0]) + '_PPrgb_autobright.tif',pp_rgb2)
+      # Save the linear RGB image as a 16-bit TIFF
+      imageio.imsave(destination_2 + os.path.basename(os.path.splitext(raw_files[i])[0]) + '_xyz.tif',xyz)
+      # Save the LAB image as a 16-bit TIFF
+      imageio.imwrite(destination_2 + os.path.basename(os.path.splitext(raw_files[i])[0]) + '_lab.tiff',lab)
+      
+      # attempt to save as a single image. doesn't work.
+      #image_merged = np.concatenate((srgb, pp_rgb, xyz), axis=2)
+      #image_merged.shape
+      
+      #shape(image_merged)
+      #shape(lab)
+      
+      # save the merged 16 bit image
+      #tiff.imwrite(output_filename,image_merged)
+      
+      
+      print(f"Saved {output_filename}")
+    else:
+      print(f"File already exists: {output_filename}")
+
+```
+
+```{r}
+
+
+r<-rast('F:/PhotoproRGB_LAB_imgs/YUL3_August_22_colmods_combined.tiff')
+
+ncol(r)
+nrow(r)
+
+
+```
+
